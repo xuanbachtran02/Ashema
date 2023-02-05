@@ -16,6 +16,6 @@ bot.load_extensions_from("./ashema/extensions", must_exist=True)
 def run() -> None:
     bot.run(
         activity = hikari.Activity(
-            name = f"/play",
-            type = hikari.ActivityType.LISTENING
+            name=f"/play",
+            type=hikari.ActivityType.LISTENING
     ))

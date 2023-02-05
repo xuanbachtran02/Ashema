@@ -1,11 +1,13 @@
 import os
-from typing import Optional
-from googleapiclient.discovery import build
 import random
 import hikari
+import logging
 import lightbulb
 import lavasnek_rs
-import logging
+from typing import Optional
+from googleapiclient.discovery import build
+
+from ashema.library.SpotifyClient import SpotifyClient
 
 plugin = lightbulb.Plugin("Music", "🎧 Music commands")
 
@@ -71,6 +73,7 @@ async def start_lavalink(event: hikari.ShardReadyEvent) -> None:
 
     youtube = build('youtube', 'v3', static_discovery=False, developerKey=os.environ["YOUTUBE_API_KEY"])
     plugin.bot.d.youtube = youtube
+    plugin.bot.d.spotify = SpotifyClient()
 
 
 async def _join(ctx: lightbulb.Context) -> Optional[hikari.Snowflake]:
@@ -110,32 +113,39 @@ async def _join(ctx: lightbulb.Context) -> Optional[hikari.Snowflake]:
 
     return channel_id
 
-async def _play(ctx: lightbulb.Context, query: str):
+async def _play(ctx: lightbulb.Context, query):
     assert ctx.guild_id is not None
 
     con = plugin.bot.d.lavalink.get_guild_gateway_connection_info(ctx.guild_id)
     # Join the user's voice channel if the bot is not in one.
     if not con:
-        await _join(ctx)
+        if await _join(ctx) is None:
+            return 
 
-    query_information = await plugin.bot.d.lavalink.auto_search_tracks(query)
+    # convert string to single element list
+    if isinstance(query, str):
+        query = [query]
+    
+    body = ""
+    for track in query:
+        query_information = await plugin.bot.d.lavalink.auto_search_tracks(track)
 
-    if not query_information.tracks:  # tracks is empty
-        await ctx.respond("Could not find any video of the search query.")
-        return
-    try:
-        # `.requester()` To set who requested the track, so you can show it on now-playing or queue.
-        # `.queue()` To add the track to the queue rather than starting to play the track now.
-        await plugin.bot.d.lavalink.play(ctx.guild_id, query_information.tracks[0]).requester(ctx.author.id).queue()
-    except lavasnek_rs.NoSessionPresent:
-        await ctx.respond(f"Use `/join` first")
-        return
+        if not query_information.tracks:  # tracks is empty
+            await ctx.respond("Could not find any video of the search query.")
+            return
+        try:
+            # `.requester()` To set who requested the track, so you can show it on now-playing or queue.
+            # `.queue()` To add the track to the queue rather than starting to play the track now.
+            await plugin.bot.d.lavalink.play(ctx.guild_id, query_information.tracks[0]).requester(ctx.author.id).queue()
+        # except lavasnek_rs.NoSessionPresent:
+        #     await ctx.respond(f"Use `/join` first")
+        #     return
+        except:
+            continue
+        body += f"- [{query_information.tracks[0].info.title}]({query_information.tracks[0].info.uri}) added to queue [{ctx.author.mention}]" + '\n'
 
     await ctx.respond(
-        embed = hikari.Embed(
-            description = f"[{query_information.tracks[0].info.title}]({query_information.tracks[0].info.uri}) added to queue [{ctx.author.mention}]",
-            colour = 0x76ffa1
-        )
+        embed = hikari.Embed(description = body, colour = 0x76ffa1)
     )
 
 @plugin.command()
@@ -179,7 +189,14 @@ async def play(ctx: lightbulb.Context) -> None:
     """Searches the query on youtube, or adds the URL to the queue."""
 
     query = ctx.options.query
-    await _play(ctx, query)
+
+    playlist_id = SpotifyClient.get_playlist_id(query)
+
+    if not playlist_id:
+        await _play(ctx, query)
+    else:
+        tracks = plugin.bot.d.spotify.get_tracks_from_playlist(playlist_id)
+        await _play(ctx, tracks)
 
 @plugin.command()
 @lightbulb.add_checks(lightbulb.guild_only)
